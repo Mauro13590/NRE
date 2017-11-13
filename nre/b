@@ -39,6 +39,8 @@ if [ "$NRE_TARGET" = "x86_32" ]; then
 elif [ "$NRE_TARGET" = "x86_64" ]; then
     cross="x86_64-pc-nulnova"
     gdb=$NRE_GDB_X86_64
+    export QEMU_FLAGS="-cpu core2duo $QEMU_FLAGS"
+
 else
     echo 'Please define $NRE_TARGET to x86_32 or x86_64!' >&2
     exit 1
@@ -192,7 +194,7 @@ if $dobuild; then
             esac
             case $line in
                 +*|-*|U*)
-                    subname=`echo $line | sed -e 's/^.[[:xdigit:]]* //g'` 
+                    subname=`echo $line | sed -e 's/^.[[:xdigit:]]* //g'`
                     echo "\33[1mThe status of submodule $subname is not as expected ($substatus)."
                     echo "Maybe you want to do an 'git submodule update --init'?\33[0m"
                     ;;
@@ -205,7 +207,7 @@ if $dobuild; then
 
     if [ -d $novadir/build ]; then
         cd $novadir/build
-        
+
         # adjust build-flags depending on build-type
         if [ "`grep 'OFLAGS[[:space:]]*:=[[:space:]]*-O0' Makefile`" != "" ]; then
             if [ "$NRE_BUILD" != "debug" ]; then
@@ -244,7 +246,7 @@ if [ "$binary" != "" ]; then
         exit 1
     fi
 fi
- 
+
 # run the specified command, if any
 case "$cmd" in
     clean)
@@ -335,7 +337,7 @@ case "$cmd" in
         ;;
     list)
         echo "Start of section .text:"
-        ls -1 $build/bin/apps | while read l; do	
+        ls -1 $build/bin/apps | while read l; do
             $crossdir/bin/$cross-readelf -S $build/bin/apps/$l | \
                 grep "\.text " | awk "{ printf(\"%12s: %s\n\",\"$l\",\$5) }"
         done
