@@ -22,7 +22,8 @@ if [ -z "$NRE_GDB_X86_32" ]; then
     export NRE_GDB_X86_32="gdb -tui"
 fi
 if [ -z "$NRE_GDB_X86_64" ]; then
-    export NRE_GDB_X86_64=x86_64-linux-gnu-gdbtui
+    export NRE_GDB_X86_64="gdb -tui"
+
 fi
 if [ -z "$QEMU" ]; then
    export QEMU=qemu-system-x86_64
@@ -39,7 +40,7 @@ if [ "$NRE_TARGET" = "x86_32" ]; then
 elif [ "$NRE_TARGET" = "x86_64" ]; then
     cross="x86_64-pc-nulnova"
     gdb=$NRE_GDB_X86_64
-    export QEMU_FLAGS="-cpu core2duo $QEMU_FLAGS"
+    export QEMU_FLAGS="-cpu phenom $QEMU_FLAGS"
 
 else
     echo 'Please define $NRE_TARGET to x86_32 or x86_64!' >&2
@@ -213,7 +214,7 @@ if $dobuild; then
             if [ "$NRE_BUILD" != "debug" ]; then
                 # it should be release, but isn't
                 sed --in-place -e \
-                    's/OFLAGS[[:space:]]*:=[[:space:]]*-O0.*/OFLAGS\t\t:= -Os -g/' Makefile
+                    's/OFLAGS[[:space:]]*:=[[:space:]]*-O0.*/OFLAGS\t\t:= -Os -ggdb -g/' Makefile
             fi
         else
             if [ "$NRE_BUILD" != "release" ]; then
