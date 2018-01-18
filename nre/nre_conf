@@ -1,0 +1,205 @@
+#!/bin/sh
+
+
+
+check(){
+
+    echo "Installation of packages for NOVA-NRE..."
+
+    sudo apt-get install -y libmpc-dev
+    sudo apt-get install -y scons
+    sudo apt-get install -y qemu
+    sudo apt-get install -y texinfo
+    sudo apt-get install -y git
+    sudo apt-get install -y g++
+
+    echo ""
+    echo "Installation Complete!!"
+
+}
+
+
+help(){
+    echo ""
+    echo "Welcome NRE Configuration!! (Created by Maurizio Sepe)"
+    echo ""
+    echo "This script is used to bridge any shortcomings in terms of compatibility with"
+    echo "the NOVA-NRE microhypervisor and allow the creation of a development evironment"
+    echo "on such a simple and fast system."
+    echo ""
+    echo ""
+    echo -n "The commands available are as follows:"
+    echo ""
+    echo ""
+    echo "check:                            Install a list of packages needed for" 
+    echo "                                  NOVA-NRE that may be missing."
+    echo ""
+    echo "workspace <name_workspace>:       It allows to create the directory where"
+    echo "                                  with the files necessary for the"
+    echo "                                  creation of a module."
+    echo "                                  NOTE: the directory name will match the"
+    echo "                                  name of the .cc file."
+    echo ""
+    echo "new_conf <name_workspace>:        Create a new configuration for NOVA-Nre"
+    echo "                                  for user's workspace."       
+    echo ""
+    echo "add_module <name_module> <ncpu>:  Add user's module to nova_manager."
+    echo ""
+    echo "iso <name_configuration>:         Create iso from configuration."
+    echo "                                  NOTE: iso file locate in iso_image"
+    echo "                                  directory."
+    exit 0
+}
+
+
+n_workspace(){
+
+
+    if [ -e $PWD/apps/$parameter ];then
+        echo "Directory and file already exists."
+        read -p "Insert a differente name: " parameter
+        n_workspace $0
+   else   
+        mkdir $PWD/apps/$parameter
+        touch $PWD/apps/$parameter/$parameter.cc
+        touch $PWD/apps/$parameter/SConscript
+        echo "# -*- Mode: Python -*-" >> $PWD/apps/$parameter/SConscript
+        echo "" >> $PWD/apps/$parameter/SConscript
+        echo "Import('env')" >> $PWD/apps/$parameter/SConscript
+        echo "" >> $PWD/apps/$parameter/SConscript
+        echo "env.NREProgram(env,'$parameter', Glob('*.cc'))" >> $PWD/apps/$parameter/SConscript
+        echo ""
+        echo "Workspace Create"
+    fi
+
+    exit 0
+
+}
+
+
+new_conf(){
+    cpu=""
+    answer=""
+    mode=""
+        if [ -e $PWD/boot/$parameter ];then
+            echo "Configuration already exists"
+            echo "Attention: name configuration as same name module"
+        else
+            read -p "Do you want to manually assign the CPU for the module $parameter?(yes/no):" answer
+            if [ $answer = "yes" ];then
+                mode="User"
+                read -p "Choose the CPU (0,...n-1) on which you want to launch the module $parameter:" cpu
+            else 
+                 mode="System" 
+            fi       
+            touch $PWD/boot/$parameter
+            echo "#!tools/novaboot" >> $PWD/boot/$parameter
+            echo "# -*-sh-*-" >> $PWD/boot/$parameter
+            echo "QEMU_FLAGS=-m 1024 -smp 4" >> $PWD/boot/$parameter
+            echo "HYPERVISOR_PARAMS=spinner serial" >> $PWD/boot/$parameter
+            echo "bin/apps/root" >> $PWD/boot/$parameter
+            echo "bin/apps/acpi provides=acpi" >> $PWD/boot/$parameter
+            echo "bin/apps/keyboard provides=keyboard" >> $PWD/boot/$parameter
+            echo "bin/apps/reboot provides=reboot" >> $PWD/boot/$parameter
+            echo "bin/apps/pcicfg provides=pcicfg" >> $PWD/boot/$parameter
+            echo "bin/apps/timer provides=timer" >> $PWD/boot/$parameter
+            echo "bin/apps/console provides=console" >> $PWD/boot/$parameter
+            echo "bin/apps/sysinfo" >> $PWD/boot/$parameter
+            echo "bin/apps/nova_manager mods=all lastmod" >> $PWD/boot/$parameter
+            echo "bin/apps/$parameter" >> $PWD/boot/$parameter
+            if [ "$mode" = "User" ];then
+                echo "$parameter.vmconfig mode=$mode ncpu=$cpu <<EOF" >> $PWD/boot/$parameter
+            else
+                echo "$parameter.vmconfig mode=$mode <<EOF" >> $PWD/boot/$parameter
+            fi
+            echo "rom://bin/apps/$parameter" >> $PWD/boot/$parameter
+            echo "EOF" >> $PWD/boot/$parameter
+            echo ""
+            echo ""
+            echo "Configuration file created"
+            chmod 777 $PWD/boot/$parameter
+        fi      
+    exit 0
+    
+}
+
+add_module(){
+
+    if ! [ -e $PWD/apps/$parameter ];then
+        echo "Directory and file not exists."
+        exit 1
+    fi
+    file="$PWD/boot/nova_manager"
+    line="bin\/apps\/nova_manager mods=all lastmod"
+    sed "/$line/a bin/apps/$parameter" $file | tee $file  
+    if [ "$second_parameter" = "" ]; then
+        echo "$parameter.vmconfig mode=System <<EOF" >> $PWD/boot/nova_manager
+    else
+        echo "$parameter.vmconfig mode=User ncpu=$second_parameter <<EOF" >> $PWD/boot/nova_manager 
+    fi
+    echo "rom://bin/apps/$parameter" >> $PWD/boot/nova_manager 
+    echo "EOF" >> $PWD/boot/nova_manager 
+
+    echo "Add Module $parameter complete !!"
+    echo ""
+    echo ""
+
+    exit 0
+}
+
+
+iso(){
+
+   ./nre iso boot/$parameter
+   search=$(find $PWD/build -iname "$parameter.iso")
+   mv $search $PWD/iso_image
+
+   echo "Create iso for configuration $parameter"
+
+    exit 0
+}
+
+
+cmd=""
+parameter=""
+second_parameter=""
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|-\?|--help)
+            help $0
+            ;;
+        *)
+            if [ "$cmd" = "" ]; then
+                cmd="$1"
+            elif [ "$parameter" = "" ]; then
+                parameter="$1"
+            elif [ "$second_parameter" = "" ]; then
+                second_parameter="$1"
+            else
+                echo "Too many arguments" >&2
+                exit 1
+            fi
+            ;;
+    esac
+    shift
+done
+
+case "$cmd" in 
+    check)
+    check $0
+    ;;
+    workspace)
+    n_workspace $0
+    ;;
+    new_conf)
+    new_conf $0
+    ;;
+    add_module)
+    add_module $0
+    ;;
+    iso)
+    iso $0
+    ;;
+   
+ esac   
