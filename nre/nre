@@ -1,0 +1,275 @@
+#!/bin/sh
+
+# config
+if [ -f /proc/cpuinfo ]; then
+    cpus=`cat /proc/cpuinfo | grep '^processor[[:space:]]*:' | wc -l`
+else
+    cpus=1
+fi
+opts="-j$cpus"
+
+# fall back to some reasonable defaults for the NRE environment variables
+if [ -z "$NRE_TARGET" ]; then
+    export NRE_TARGET=x86_64
+fi
+if [ "$NRE_BUILD" != "debug" ]; then
+    export NRE_BUILD="release"
+fi
+if [ -z "$QEMU" ]; then
+   export QEMU=qemu-system-x86_64
+fi
+if [ "$NRE_CC" != "clang" ]; then
+    export NRE_CC=gcc
+fi
+
+# target dependend values
+if [ "$NRE_TARGET" = "x86_32" ]; then
+    cross="i686-pc-nulnova"
+    gdb=$NRE_GDB_X86_32
+    export QEMU_FLAGS="-cpu phenom $QEMU_FLAGS"
+elif [ "$NRE_TARGET" = "x86_64" ]; then
+    cross="x86_64-pc-nulnova"
+    gdb=$NRE_GDB_X86_64
+    export QEMU_FLAGS="-cpu phenom $QEMU_FLAGS"
+
+else
+    echo 'Please define $NRE_TARGET to x86_32 or x86_64!' >&2
+    exit 1
+fi
+
+# don't change anything below!
+crossdir="/opt/nre-cross-$NRE_TARGET"
+build="build/$NRE_TARGET-$NRE_BUILD"
+root=$(dirname $(readlink -f $0))
+kerndir="../kernel"
+novadir="../kernel/nova"
+
+
+help() {
+    echo ""
+    echo "Welcome to NRE tool !! (Modified by Maurizio Sepe)"
+    echo ""
+    echo ""
+    echo "Usage: $1 [<cmd> <arg>] [--no-build|-n]"
+    echo ""
+    echo -n "This is a convenience script that is responsible for building everything (NOVA and NRE)"
+    echo -n " and running the specified command afterwards. It does also support switching between"
+    echo -n " debug and release builds by changing the Makefile of NOVA accordingly (adjust"
+    echo -n " optimization level, ...). The most important environment variables that influence its"
+    echo " behaviour are NRE_BUILD=(debug|release) and NRE_TARGET=(x86_32|x86_64)."
+    echo -n "You can also prevent the script from building everything by specifying -n or --no-build."
+    echo -n " In this case, only the specified command is executed."
+    echo ""
+    echo ""
+    echo "The following commands are available:"
+    echo ""
+    echo "    clean:                   do a clean in NOVA and NRE"
+    echo ""
+    echo "    distclean:               remove NRE build-dirs and remove NOVA so that"
+    echo "                             NOVA is checked out again and everything is"
+    echo "                             rebuild"
+    echo ""
+    echo "    qemu <bootscript>:       run <bootscript> in qemu."
+    echo ""
+    echo "    dis=<prog>:              run objdump -SC <prog> (the cross-compiler version)"
+    echo ""
+    echo "    elf=<prog>:              run readelf -a <prog> (the cross-compiler version)"
+    echo ""
+    echo "    nm=<prog>:               run nm -SC <prog> (the cross-compiler version)"
+    echo ""
+    echo "    constr=<prog>:           list the contructor calls of <prog>"
+    echo ""
+    echo "    trace=<prog>:            start the backtrace script for <prog>"
+    echo ""
+    echo "    list:                    list the link-address of all programs"
+    echo ""
+    echo "Environment variables:"
+    echo ""
+    echo "    NRE_TARGET:              the target architecture. Either x86_32 or x86_64."
+    echo "                             The default is x86_64."
+    echo "                             Note: for iso bootable use x86_64 as target."
+    echo "    NRE_BUILD:               the build-type. Either debug or release. In debug"
+    echo "                             mode optimizations are disabled, debug infos are"
+    echo "                             available and assertions are active. In release"
+    echo "                             mode all that is disabled. The default is release."
+    echo "    NRE_CC:                  the compiler to use for NRE (gcc or clang). The"
+    echo "                             default is gcc. Note that we use only the clang"
+    echo "                             frontend. In every case, the gcc cross-compiler"
+    echo "                             is required for linking, libsupc++, ..."
+    echo "    NRE_VERBOSE:             if 1, all executed build commands are printed."
+    echo "    QEMU:                    The qemu executable to use (default is"
+    echo "                             qemu-system-x86_64)."
+    echo "    QEMU_FLAGS:              Pass additional arguments to qemu."
+    echo ""
+    exit 0
+}
+
+# parse arguments
+dobuild=true
+cmd=""
+script=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        -h|-\?|--help)
+            help $0
+            ;;
+
+        -n|--no-build)
+            dobuild=false
+            ;;
+
+        *)
+            if [ "$cmd" = "" ]; then
+                cmd="$1"
+            elif [ "$script" = "" ]; then
+                script="$1"
+            else
+                echo "Too many arguments" >&2
+                exit 1
+            fi
+            ;;
+    esac
+    shift
+done
+
+binary=""
+case "$cmd" in
+    # check parameters
+    iso|qemu)
+        if [ "$script" = "" ]; then
+            echo "Usage: $0 $cmd <script>" >&2
+            exit 1
+        fi
+        ;;
+    dis=*|elf=*|constr=*|nm=*|trace=*)
+        if [ "`echo $cmd | grep '^straddr='`" != "" ] && [ "$script" = "" ]; then
+            echo "Usage: $0 $cmd <string>" >&2
+            exit 1
+        fi
+        binary=${cmd#*=}
+        ;;
+    # for clean and distclean, it makes no sense to build it (this might even fail because e.g. scons has
+    # a non existing dependency which might be the reason the user wants to do a clean)
+    clean|distclean)
+        dobuild=false
+        ;;
+    # check for unknown commands
+    list)
+        ;;
+    ?*)
+        echo "Unknown command '$cmd'" >&2
+        exit 1
+        ;;
+esac
+
+echo "Working with $NRE_TARGET in $NRE_BUILD mode"
+
+if $dobuild; then
+    echo "Building NRE and NOVA with $cpus jobs using $NRE_CC..."
+
+    (
+        cd ..
+        # just in case the repo URL will change someday (doesn't hurt)
+        git submodule sync
+        # warn user if the status of a submodule isn't as expected
+        git submodule status | while read line; do
+            case $line in
+                +*) substatus="other revision" ;;
+                -*) substatus="not initialized" ;;
+                U*) substatus="conflict" ;;
+            esac
+            case $line in
+                +*|-*|U*)
+                    subname=`echo $line | sed -e 's/^.[[:xdigit:]]* //g'`
+                    echo "\33[1mThe status of submodule $subname is not as expected ($substatus)."
+                    echo "Maybe you want to do an 'git submodule update --init'?\33[0m"
+                    ;;
+            esac
+        done
+    )
+
+    # build userland
+    scons $opts || exit 1
+
+    if [ -d $novadir/build ]; then
+        cd $novadir/build
+
+        # adjust build-flags depending on build-type
+        if [ "`grep 'OFLAGS[[:space:]]*:=[[:space:]]*-O0' Makefile`" != "" ]; then
+            if [ "$NRE_BUILD" != "debug" ]; then
+                # it should be release, but isn't
+                sed --in-place -e \
+                    's/OFLAGS[[:space:]]*:=[[:space:]]*-O0.*/OFLAGS\t\t:= -Os -ggdb -g/' Makefile
+            fi
+        else
+            if [ "$NRE_BUILD" != "release" ]; then
+                # it should be debug, but isn't
+                sed --in-place -e \
+                    's/OFLAGS[[:space:]]*:=[[:space:]]*.*/OFLAGS\t\t:= -O0 -g -DDEBUG/' Makefile
+            fi
+        fi
+
+        # build NOVA
+        ARCH=$NRE_TARGET make $jobs || exit 1
+
+        # copy to build-dir; convert to elf32-binary when using x86_64, because grub can't load elf64-binaries.
+        if [ "$NRE_TARGET" = "x86_64" ]; then
+            $crossdir/bin/$cross-objcopy -O elf32-i386 hypervisor-$NRE_TARGET $root/$build/bin/apps/hypervisor
+            cp hypervisor-$NRE_TARGET $root/$build/bin/apps/hypervisor-elf64
+        else
+            cp hypervisor-$NRE_TARGET $root/$build/bin/apps/hypervisor
+        fi
+        cd $root
+    else
+        echo "NOVA source not found. Not building the hypervisor."
+    fi
+fi
+
+# after building, check whether the requested binary really exists
+if [ "$binary" != "" ]; then
+    if [ ! -f "$build/bin/apps/$binary" ]; then
+        echo "The file $build/bin/apps/$binary does not exist" >&2
+        exit 1
+    fi
+fi
+
+# run the specified command, if any
+case "$cmd" in
+    clean)
+        scons -c
+        ( cd $novadir/build && ARCH=$NRE_TARGET make clean )
+        ;;
+    distclean)
+        rm -Rf build/* $novadir
+        ;;
+    iso)
+        mkdir -p $build/bin/boot/grub
+        cp $root/dist/iso/boot/grub/stage2_eltorito $build/bin/boot/grub
+        ./tools/novaboot --build-dir="$PWD/$build" --iso --strip-rom -- $script
+        ;;
+    qemu)
+        ./$script --qemu="$QEMU" --qemu-append="$QEMU_FLAGS" --build-dir="$PWD/$build" --strip-rom | tee log.txt
+        ;;
+   dis=*)
+        $crossdir/bin/$cross-objdump -SC $build/bin/apps/$binary | less
+        ;;
+    elf=*)
+        $crossdir/bin/$cross-readelf -a $build/bin/apps/$binary | less
+        ;;
+    constr=*)
+    	./tools/listconstr.sh $crossdir $cross $build/bin/apps/$binary
+        ;;
+    nm=*)
+        $crossdir/bin/$cross-nm -SC $build/bin/apps/$binary | sort | less
+        ;;
+    trace=*)
+        tools/backtrace $build/bin/apps/$binary
+        ;;
+   list)
+        echo "Start of section .text:"
+        ls -1 $build/bin/apps | while read l; do
+            $crossdir/bin/$cross-readelf -S $build/bin/apps/$l | \
+                grep "\.text " | awk "{ printf(\"%12s: %s\n\",\"$l\",\$5) }"
+        done
+        ;;
+esac

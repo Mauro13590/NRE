@@ -1,0 +1,5 @@
+# -*- Mode: Python -*-
+
+Import('env')
+
+env.NREProgram(env, 'test_case', [Glob('*.cc'), Glob('*/*.cc')])

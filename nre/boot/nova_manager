@@ -1,0 +1,25 @@
+#!tools/novaboot
+# -*-sh-*-
+QEMU_FLAGS=-m 1024 -smp 4
+HYPERVISOR_PARAMS=spinner serial
+bin/apps/root
+bin/apps/acpi provides=acpi
+bin/apps/keyboard provides=keyboard
+bin/apps/reboot provides=reboot
+bin/apps/pcicfg provides=pcicfg
+bin/apps/timer provides=timer
+bin/apps/console provides=console
+bin/apps/sysinfo
+bin/apps/nova_manager mods=all lastmod
+bin/apps/ERTMS_module
+bin/apps/ACC_module
+bin/apps/critical_module
+ERTMS_module.vmconfig mode=User ncpu=1 <<EOF
+rom://bin/apps/ERTMS_module
+EOF
+ACC_module.vmconfig mode=User ncpu=2 <<EOF
+rom://bin/apps/ACC_module
+EOF
+critical_module.vmconfig mode=User ncpu=3 <<EOF
+rom://bin/apps/critical_module
+EOF
