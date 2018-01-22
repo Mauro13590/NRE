@@ -152,6 +152,9 @@ iso(){
 
    ./nre iso boot/$parameter
    search=$(find $PWD/build -iname "$parameter.iso")
+   if [ ! -d $PWD/iso_image ]; then
+  	mkdir -p $PWD/iso_image;
+   fi
    mv $search $PWD/iso_image
 
    echo "Create iso for configuration $parameter"
